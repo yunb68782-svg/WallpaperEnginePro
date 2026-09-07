@@ -209,6 +209,26 @@ jobs:
         </vector>
         '''
 
+        # ==================== 引擎核心接口 ====================
+        files['app/src/main/java/com/example/wallpaperengine/domain/engine/WallpaperEngine.kt'] = '''package com.example.wallpaperengine.domain.engine
+
+        import android.view.MotionEvent
+        import android.view.SurfaceHolder
+        import com.example.wallpaperengine.domain.model.WallpaperConfig
+
+        interface WallpaperEngine {
+            fun onCreate(holder: SurfaceHolder, width: Int, height: Int)
+            fun onSurfaceChanged(width: Int, height: Int)
+            fun onVisibilityChanged(visible: Boolean)
+            fun onTouch(event: MotionEvent)
+            fun onSensor(tiltX: Float, tiltY: Float)
+            fun onTime(hour: Int)
+            fun onBattery(level: Int, isLowPower: Boolean)
+            fun updateConfig(config: WallpaperConfig)
+            fun onDestroy()
+        }
+        '''
+
         # ==================== 领域模型与纯数学逻辑 ====================
         files['app/src/main/java/com/example/wallpaperengine/domain/model/WallpaperModels.kt'] = '''package com.example.wallpaperengine.domain.model
 
@@ -1525,7 +1545,219 @@ jobs:
         }
         '''
 
-        # ==================== 仓储层 ====================
+        # ==================== 仓储层与数据库接口 ====================
+        files['app/src/main/java/com/example/wallpaperengine/data/database/SqlExecutor.kt'] = '''package com.example.wallpaperengine.data.database
+
+        interface SqlExecutor {
+            fun execSQL(sql: String)
+            fun queryTableColumns(tableName: String): Set<String>
+        }
+        '''
+
+        files['app/src/main/java/com/example/wallpaperengine/data/database/WallpaperDatabase.kt'] = '''package com.example.wallpaperengine.data.database
+
+        import android.content.ContentValues
+        import android.content.Context
+        import android.database.sqlite.SQLiteDatabase
+        import android.database.sqlite.SQLiteOpenHelper
+        import com.example.wallpaperengine.domain.model.WallpaperConfig
+        import com.example.wallpaperengine.domain.model.WallpaperItem
+        import com.example.wallpaperengine.domain.model.WallpaperType
+
+        class WallpaperDatabase(context: Context) : SQLiteOpenHelper(context, "wallpaper.db", null, 5) {
+
+            companion object {
+                private const val TABLE_NAME = "wallpapers"
+                private const val COL_ID = "id"
+                private const val COL_NAME = "name"
+                private const val COL_PATH = "path"
+                private const val COL_THUMBNAIL = "thumbnailPath"
+                private const val COL_TYPE = "type"
+                private const val COL_CATEGORY = "category"
+                private const val COL_FAVORITE = "isFavorite"
+                private const val COL_LAST_USED = "lastUsedTime"
+                private const val COL_MAX_FPS = "maxFps"
+                private const val COL_SPEED = "playbackSpeed"
+                private const val COL_MUTED = "isMuted"
+                private const val COL_SCALE = "scaleMode"
+                private const val COL_TOUCH_INTERACTIVE = "touchInteractive"
+                private const val COL_TOUCH_INTENSITY = "touchIntensity"
+                private const val COL_GYRO_ENABLED = "gyroEnabled"
+                private const val COL_GYRO_SENSITIVITY = "gyroSensitivity"
+                private const val COL_DAY_NIGHT = "dayNightEnabled"
+                private const val COL_POWER_SAVE = "powerSaveMode"
+
+                fun executeV4ToV5Migration(executor: SqlExecutor) {
+                    val columns = executor.queryTableColumns(TABLE_NAME)
+                    if (!columns.contains("supportsTouch") && !columns.contains("supportsGyro") && !columns.contains("supportsAudio")) {
+                        return
+                    }
+
+                    executor.execSQL("""
+                        CREATE TABLE ${TABLE_NAME}_new (
+                            $COL_ID TEXT PRIMARY KEY,
+                            $COL_NAME TEXT NOT NULL,
+                            $COL_PATH TEXT NOT NULL,
+                            $COL_THUMBNAIL TEXT,
+                            $COL_TYPE TEXT NOT NULL,
+                            $COL_CATEGORY TEXT NOT NULL,
+                            $COL_FAVORITE INTEGER NOT NULL DEFAULT 0,
+                            $COL_LAST_USED INTEGER NOT NULL DEFAULT 0,
+                            $COL_MAX_FPS INTEGER NOT NULL DEFAULT 30,
+                            $COL_SPEED REAL NOT NULL DEFAULT 1.0,
+                            $COL_MUTED INTEGER NOT NULL DEFAULT 1,
+                            $COL_SCALE INTEGER NOT NULL DEFAULT 0,
+                            $COL_TOUCH_INTERACTIVE INTEGER NOT NULL DEFAULT 1,
+                            $COL_TOUCH_INTENSITY REAL NOT NULL DEFAULT 1.0,
+                            $COL_GYRO_ENABLED INTEGER NOT NULL DEFAULT 1,
+                            $COL_GYRO_SENSITIVITY REAL NOT NULL DEFAULT 1.0,
+                            $COL_DAY_NIGHT INTEGER NOT NULL DEFAULT 1,
+                            $COL_POWER_SAVE INTEGER NOT NULL DEFAULT 1
+                        )
+                    """.trimIndent())
+
+                    executor.execSQL("""
+                        INSERT INTO ${TABLE_NAME}_new ($COL_ID, $COL_NAME, $COL_PATH, $COL_THUMBNAIL, $COL_TYPE, $COL_CATEGORY,
+                            $COL_FAVORITE, $COL_LAST_USED, $COL_MAX_FPS, $COL_SPEED, $COL_MUTED, $COL_SCALE,
+                            $COL_TOUCH_INTERACTIVE, $COL_TOUCH_INTENSITY, $COL_GYRO_ENABLED, $COL_GYRO_SENSITIVITY,
+                            $COL_DAY_NIGHT, $COL_POWER_SAVE)
+                        SELECT $COL_ID, $COL_NAME, $COL_PATH, $COL_THUMBNAIL, $COL_TYPE, $COL_CATEGORY,
+                            $COL_FAVORITE, $COL_LAST_USED, $COL_MAX_FPS, $COL_SPEED, $COL_MUTED, $COL_SCALE,
+                            $COL_TOUCH_INTERACTIVE, $COL_TOUCH_INTENSITY, $COL_GYRO_ENABLED, $COL_GYRO_SENSITIVITY,
+                            $COL_DAY_NIGHT, $COL_POWER_SAVE
+                        FROM $TABLE_NAME
+                    """.trimIndent())
+
+                    executor.execSQL("DROP TABLE $TABLE_NAME")
+                    executor.execSQL("ALTER TABLE ${TABLE_NAME}_new RENAME TO $TABLE_NAME")
+                }
+            }
+
+            override fun onCreate(db: SQLiteDatabase) {
+                val sql = """
+                    CREATE TABLE $TABLE_NAME (
+                        $COL_ID TEXT PRIMARY KEY,
+                        $COL_NAME TEXT NOT NULL,
+                        $COL_PATH TEXT NOT NULL,
+                        $COL_THUMBNAIL TEXT,
+                        $COL_TYPE TEXT NOT NULL,
+                        $COL_CATEGORY TEXT NOT NULL,
+                        $COL_FAVORITE INTEGER NOT NULL DEFAULT 0,
+                        $COL_LAST_USED INTEGER NOT NULL DEFAULT 0,
+                        $COL_MAX_FPS INTEGER NOT NULL DEFAULT 30,
+                        $COL_SPEED REAL NOT NULL DEFAULT 1.0,
+                        $COL_MUTED INTEGER NOT NULL DEFAULT 1,
+                        $COL_SCALE INTEGER NOT NULL DEFAULT 0,
+                        $COL_TOUCH_INTERACTIVE INTEGER NOT NULL DEFAULT 1,
+                        $COL_TOUCH_INTENSITY REAL NOT NULL DEFAULT 1.0,
+                        $COL_GYRO_ENABLED INTEGER NOT NULL DEFAULT 1,
+                        $COL_GYRO_SENSITIVITY REAL NOT NULL DEFAULT 1.0,
+                        $COL_DAY_NIGHT INTEGER NOT NULL DEFAULT 1,
+                        $COL_POWER_SAVE INTEGER NOT NULL DEFAULT 1
+                    )
+                """.trimIndent()
+                db.execSQL(sql)
+            }
+
+            override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+                if (oldVersion < 5) {
+                    executeV4ToV5Migration(object : SqlExecutor {
+                        override fun execSQL(sql: String) = db.execSQL(sql)
+                        override fun queryTableColumns(tableName: String): Set<String> {
+                            val columns = mutableSetOf<String>()
+                            db.rawQuery("PRAGMA table_info($tableName)", null).use { cursor ->
+                                val index = cursor.getColumnIndex("name")
+                                while (cursor.moveToNext()) {
+                                    columns.add(cursor.getString(index))
+                                }
+                            }
+                            return columns
+                        }
+                    })
+                }
+            }
+
+            fun getAll(): List<WallpaperItem> {
+                val list = mutableListOf<WallpaperItem>()
+                readableDatabase.rawQuery("SELECT * FROM $TABLE_NAME", null).use { cursor ->
+                    while (cursor.moveToNext()) {
+                        list.add(readItem(cursor))
+                    }
+                }
+                return list
+            }
+
+            fun getById(id: String): WallpaperItem? {
+                readableDatabase.rawQuery("SELECT * FROM $TABLE_NAME WHERE $COL_ID = ?", arrayOf(id)).use { cursor ->
+                    return if (cursor.moveToFirst()) readItem(cursor) else null
+                }
+            }
+
+            fun insertOrUpdate(item: WallpaperItem) {
+                val values = ContentValues().apply {
+                    put(COL_ID, item.id)
+                    put(COL_NAME, item.name)
+                    put(COL_PATH, item.path)
+                    put(COL_THUMBNAIL, item.thumbnailPath)
+                    put(COL_TYPE, item.type.name)
+                    put(COL_CATEGORY, item.category)
+                    put(COL_FAVORITE, if (item.isFavorite) 1 else 0)
+                    put(COL_LAST_USED, item.lastUsedTime)
+                    put(COL_MAX_FPS, item.config.maxFps)
+                    put(COL_SPEED, item.config.playbackSpeed)
+                    put(COL_MUTED, if (item.config.isMuted) 1 else 0)
+                    put(COL_SCALE, item.config.scaleMode)
+                    put(COL_TOUCH_INTERACTIVE, if (item.config.touchInteractive) 1 else 0)
+                    put(COL_TOUCH_INTENSITY, item.config.touchIntensity)
+                    put(COL_GYRO_ENABLED, if (item.config.gyroEnabled) 1 else 0)
+                    put(COL_GYRO_SENSITIVITY, item.config.gyroSensitivity)
+                    put(COL_DAY_NIGHT, if (item.config.dayNightEnabled) 1 else 0)
+                    put(COL_POWER_SAVE, if (item.config.powerSaveMode) 1 else 0)
+                }
+                writableDatabase.insertWithOnConflict(TABLE_NAME, null, values, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+
+            fun delete(id: String) {
+                writableDatabase.delete(TABLE_NAME, "$COL_ID = ?", arrayOf(id))
+            }
+
+            private fun readItem(cursor: android.database.Cursor): WallpaperItem {
+                val id = cursor.getString(cursor.getColumnIndexOrThrow(COL_ID))
+                val name = cursor.getString(cursor.getColumnIndexOrThrow(COL_NAME))
+                val path = cursor.getString(cursor.getColumnIndexOrThrow(COL_PATH))
+                val thumbnail = cursor.getString(cursor.getColumnIndexOrThrow(COL_THUMBNAIL))
+                val type = WallpaperType.valueOf(cursor.getString(cursor.getColumnIndexOrThrow(COL_TYPE)))
+                val category = cursor.getString(cursor.getColumnIndexOrThrow(COL_CATEGORY))
+                val favorite = cursor.getInt(cursor.getColumnIndexOrThrow(COL_FAVORITE)) == 1
+                val lastUsed = cursor.getLong(cursor.getColumnIndexOrThrow(COL_LAST_USED))
+                val maxFps = cursor.getInt(cursor.getColumnIndexOrThrow(COL_MAX_FPS))
+                val speed = cursor.getFloat(cursor.getColumnIndexOrThrow(COL_SPEED))
+                val muted = cursor.getInt(cursor.getColumnIndexOrThrow(COL_MUTED)) == 1
+                val scale = cursor.getInt(cursor.getColumnIndexOrThrow(COL_SCALE))
+                val touchInteractive = cursor.getInt(cursor.getColumnIndexOrThrow(COL_TOUCH_INTERACTIVE)) == 1
+                val touchIntensity = cursor.getFloat(cursor.getColumnIndexOrThrow(COL_TOUCH_INTENSITY))
+                val gyroEnabled = cursor.getInt(cursor.getColumnIndexOrThrow(COL_GYRO_ENABLED)) == 1
+                val gyroSensitivity = cursor.getFloat(cursor.getColumnIndexOrThrow(COL_GYRO_SENSITIVITY))
+                val dayNight = cursor.getInt(cursor.getColumnIndexOrThrow(COL_DAY_NIGHT)) == 1
+                val powerSave = cursor.getInt(cursor.getColumnIndexOrThrow(COL_POWER_SAVE)) == 1
+
+                val config = WallpaperConfig(
+                    maxFps = maxFps,
+                    playbackSpeed = speed,
+                    isMuted = muted,
+                    scaleMode = scale,
+                    touchInteractive = touchInteractive,
+                    touchIntensity = touchIntensity,
+                    gyroEnabled = gyroEnabled,
+                    gyroSensitivity = gyroSensitivity,
+                    dayNightEnabled = dayNight,
+                    powerSaveMode = powerSave
+                )
+                return WallpaperItem(id, name, path, thumbnail, type, category, favorite, lastUsed, config)
+            }
+        }
+        '''
+
         files['app/src/main/java/com/example/wallpaperengine/data/repository/WallpaperRepository.kt'] = '''package com.example.wallpaperengine.data.repository
 
         import android.content.Context
@@ -1673,7 +1905,7 @@ jobs:
         }
         '''
 
-        # ==================== 本地视频安全导入工具 ====================
+        # ==================== 本地视频导入 ====================
         files['app/src/main/java/com/example/wallpaperengine/domain/media/VideoImportHelper.kt'] = '''package com.example.wallpaperengine.domain.media
 
         import android.content.Context
@@ -1962,7 +2194,7 @@ jobs:
         }
         '''
 
-        # ==================== MainActivity (交互主界面) ====================
+        # ==================== MainActivity ====================
         files['app/src/main/java/com/example/wallpaperengine/MainActivity.kt'] = '''package com.example.wallpaperengine
 
         import android.app.WallpaperManager
@@ -1975,7 +2207,6 @@ jobs:
         import androidx.activity.compose.rememberLauncherForActivityResult
         import androidx.activity.compose.setContent
         import androidx.activity.result.contract.ActivityResultContracts
-        import androidx.compose.foundation.background
         import androidx.compose.foundation.layout.*
         import androidx.compose.foundation.lazy.LazyColumn
         import androidx.compose.foundation.lazy.items
@@ -2035,7 +2266,7 @@ jobs:
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = "OPPO / ColorOS 手机专属控制台",
+                                        text = "OPPO / ColorOS 专属控制台",
                                         fontSize = 13.sp,
                                         color = Color.Gray
                                     )
@@ -2053,7 +2284,7 @@ jobs:
                                                 }
                                                 startActivity(intent)
                                             } catch (e: Exception) {
-                                                Toast.makeText(this@MainActivity, "无法调起系统壁纸通道: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                                                Toast.makeText(this@MainActivity, "调起系统壁纸通道失败: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                                             }
                                         },
                                         modifier = Modifier.fillMaxWidth().height(52.dp),
@@ -2094,7 +2325,7 @@ jobs:
                                     ) {
                                         Column(modifier = Modifier.padding(16.dp)) {
                                             Row(
-                                                modifier = Modifier.fillMaxWidth(),
+                                                modifier = Modifier.fillMaxWidth>,
                                                 horizontalArrangement = Arrangement.SpaceBetween,
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
@@ -2226,7 +2457,7 @@ jobs:
                 private var parallaxManager: SensorParallaxManager? = null
                 private var isVisibleState = false
 
-                fun notifyBatteryChanged(level: Int, isLow) {
+                fun notifyBatteryChanged(level: Int, isLow: Boolean) {
                     engine?.onBattery(level, isLow)
                 }
 
@@ -2590,211 +2821,6 @@ jobs:
         }
         '''
 
-        # ==================== WallpaperDatabase ====================
-        files['app/src/main/java/com/example/wallpaperengine/data/database/WallpaperDatabase.kt'] = '''package com.example.wallpaperengine.data.database
-
-        import android.content.ContentValues
-        import android.content.Context
-        import android.database.sqlite.SQLiteDatabase
-        import android.database.sqlite.SQLiteOpenHelper
-        import com.example.wallpaperengine.domain.model.WallpaperConfig
-        import com.example.wallpaperengine.domain.model.WallpaperItem
-        import com.example.wallpaperengine.domain.model.WallpaperType
-
-        class WallpaperDatabase(context: Context) : SQLiteOpenHelper(context, "wallpaper.db", null, 5) {
-
-            companion object {
-                private const val TABLE_NAME = "wallpapers"
-                private const val COL_ID = "id"
-                private const val COL_NAME = "name"
-                private const val COL_PATH = "path"
-                private const val COL_THUMBNAIL = "thumbnailPath"
-                private const val COL_TYPE = "type"
-                private const val COL_CATEGORY = "category"
-                private const val COL_FAVORITE = "isFavorite"
-                private const val COL_LAST_USED = "lastUsedTime"
-                private const val COL_MAX_FPS = "maxFps"
-                private const val COL_SPEED = "playbackSpeed"
-                private const val COL_MUTED = "isMuted"
-                private const val COL_SCALE = "scaleMode"
-                private const val COL_TOUCH_INTERACTIVE = "touchInteractive"
-                private const val COL_TOUCH_INTENSITY = "touchIntensity"
-                private const val COL_GYRO_ENABLED = "gyroEnabled"
-                private const val COL_GYRO_SENSITIVITY = "gyroSensitivity"
-                private const val COL_DAY_NIGHT = "dayNightEnabled"
-                private const val COL_POWER_SAVE = "powerSaveMode"
-
-                fun executeV4ToV5Migration(executor: SqlExecutor) {
-                    val columns = executor.queryTableColumns(TABLE_NAME)
-                    if (!columns.contains("supportsTouch") && !columns.contains("supportsGyro") && !columns.contains("supportsAudio")) {
-                        return
-                    }
-
-                    executor.execSQL("""
-                        CREATE TABLE ${TABLE_NAME}_new (
-                            $COL_ID TEXT PRIMARY KEY,
-                            $COL_NAME TEXT NOT NULL,
-                            $COL_PATH TEXT NOT NULL,
-                            $COL_THUMBNAIL TEXT,
-                            $COL_TYPE TEXT NOT NULL,
-                            $COL_CATEGORY TEXT NOT NULL,
-                            $COL_FAVORITE INTEGER NOT NULL DEFAULT 0,
-                            $COL_LAST_USED INTEGER NOT NULL DEFAULT 0,
-                            $COL_MAX_FPS INTEGER NOT NULL DEFAULT 30,
-                            $COL_SPEED REAL NOT NULL DEFAULT 1.0,
-                            $COL_MUTED INTEGER NOT NULL DEFAULT 1,
-                            $COL_SCALE INTEGER NOT NULL DEFAULT 0,
-                            $COL_TOUCH_INTERACTIVE INTEGER NOT NULL DEFAULT 1,
-                            $COL_TOUCH_INTENSITY REAL NOT NULL DEFAULT 1.0,
-                            $COL_GYRO_ENABLED INTEGER NOT NULL DEFAULT 1,
-                            $COL_GYRO_SENSITIVITY REAL NOT NULL DEFAULT 1.0,
-                            $COL_DAY_NIGHT INTEGER NOT NULL DEFAULT 1,
-                            $COL_POWER_SAVE INTEGER NOT NULL DEFAULT 1
-                        )
-                    """.trimIndent())
-
-                    executor.execSQL("""
-                        INSERT INTO ${TABLE_NAME}_new ($COL_ID, $COL_NAME, $COL_PATH, $COL_THUMBNAIL, $COL_TYPE, $COL_CATEGORY,
-                            $COL_FAVORITE, $COL_LAST_USED, $COL_MAX_FPS, $COL_SPEED, $COL_MUTED, $COL_SCALE,
-                            $COL_TOUCH_INTERACTIVE, $COL_TOUCH_INTENSITY, $COL_GYRO_ENABLED, $COL_GYRO_SENSITIVITY,
-                            $COL_DAY_NIGHT, $COL_POWER_SAVE)
-                        SELECT $COL_ID, $COL_NAME, $COL_PATH, $COL_THUMBNAIL, $COL_TYPE, $COL_CATEGORY,
-                            $COL_FAVORITE, $COL_LAST_USED, $COL_MAX_FPS, $COL_SPEED, $COL_MUTED, $COL_SCALE,
-                            $COL_TOUCH_INTERACTIVE, $COL_TOUCH_INTENSITY, $COL_GYRO_ENABLED, $COL_GYRO_SENSITIVITY,
-                            $COL_DAY_NIGHT, $COL_POWER_SAVE
-                        FROM $TABLE_NAME
-                    """.trimIndent())
-
-                    executor.execSQL("DROP TABLE $TABLE_NAME")
-                    executor.execSQL("ALTER TABLE ${TABLE_NAME}_new RENAME TO $TABLE_NAME")
-                }
-            }
-
-            override fun onCreate(db: SQLiteDatabase) {
-                val sql = """
-                    CREATE TABLE $TABLE_NAME (
-                        $COL_ID TEXT PRIMARY KEY,
-                        $COL_NAME TEXT NOT NULL,
-                        $COL_PATH TEXT NOT NULL,
-                        $COL_THUMBNAIL TEXT,
-                        $COL_TYPE TEXT NOT NULL,
-                        $COL_CATEGORY TEXT NOT NULL,
-                        $COL_FAVORITE INTEGER NOT NULL DEFAULT 0,
-                        $COL_LAST_USED INTEGER NOT NULL DEFAULT 0,
-                        $COL_MAX_FPS INTEGER NOT NULL DEFAULT 30,
-                        $COL_SPEED REAL NOT NULL DEFAULT 1.0,
-                        $COL_MUTED INTEGER NOT NULL DEFAULT 1,
-                        $COL_SCALE INTEGER NOT NULL DEFAULT 0,
-                        $COL_TOUCH_INTERACTIVE INTEGER NOT NULL DEFAULT 1,
-                        $COL_TOUCH_INTENSITY REAL NOT NULL DEFAULT 1.0,
-                        $COL_GYRO_ENABLED INTEGER NOT NULL DEFAULT 1,
-                        $COL_GYRO_SENSITIVITY REAL NOT NULL DEFAULT 1.0,
-                        $COL_DAY_NIGHT INTEGER NOT NULL DEFAULT 1,
-                        $COL_POWER_SAVE INTEGER NOT NULL DEFAULT 1
-                    )
-                """.trimIndent()
-                db.execSQL(sql)
-            }
-
-            override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-                if (oldVersion < 5) {
-                    executeV4ToV5Migration(object : SqlExecutor {
-                        override fun execSQL(sql: String) = db.execSQL(sql)
-                        override fun queryTableColumns(tableName: String): Set<String> {
-                            val columns = mutableSetOf<String>()
-                            db.rawQuery("PRAGMA table_info($tableName)", null).use { cursor ->
-                                val index = cursor.getColumnIndex("name")
-                                while (cursor.moveToNext()) {
-                                    columns.add(cursor.getString(index))
-                                }
-                            }
-                            return columns
-                        }
-                    })
-                }
-            }
-
-            fun getAll(): List<WallpaperItem> {
-                val list = mutableListOf<WallpaperItem>()
-                readableDatabase.rawQuery("SELECT * FROM $TABLE_NAME", null).use { cursor ->
-                    while (cursor.moveToNext()) {
-                        list.add(readItem(cursor))
-                    }
-                }
-                return list
-            }
-
-            fun getById(id: String): WallpaperItem? {
-                readableDatabase.rawQuery("SELECT * FROM $TABLE_NAME WHERE $COL_ID = ?", arrayOf(id)).use { cursor ->
-                    return if (cursor.moveToFirst()) readItem(cursor) else null
-                }
-            }
-
-            fun insertOrUpdate(item: WallpaperItem) {
-                val values = ContentValues().apply {
-                    put(COL_ID, item.id)
-                    put(COL_NAME, item.name)
-                    put(COL_PATH, item.path)
-                    put(COL_THUMBNAIL, item.thumbnailPath)
-                    put(COL_TYPE, item.type.name)
-                    put(COL_CATEGORY, item.category)
-                    put(COL_FAVORITE, if (item.isFavorite) 1 else 0)
-                    put(COL_LAST_USED, item.lastUsedTime)
-                    put(COL_MAX_FPS, item.config.maxFps)
-                    put(COL_SPEED, item.config.playbackSpeed)
-                    put(COL_MUTED, if (item.config.isMuted) 1 else 0)
-                    put(COL_SCALE, item.config.scaleMode)
-                    put(COL_TOUCH_INTERACTIVE, if (item.config.touchInteractive) 1 else 0)
-                    put(COL_TOUCH_INTENSITY, item.config.touchIntensity)
-                    put(COL_GYRO_ENABLED, if (item.config.gyroEnabled) 1 else 0)
-                    put(COL_GYRO_SENSITIVITY, item.config.gyroSensitivity)
-                    put(COL_DAY_NIGHT, if (item.config.dayNightEnabled) 1 else 0)
-                    put(COL_POWER_SAVE, if (item.config.powerSaveMode) 1 else 0)
-                }
-                writableDatabase.insertWithOnConflict(TABLE_NAME, null, values, SQLiteDatabase.CONFLICT_REPLACE)
-            }
-
-            fun delete(id: String) {
-                writableDatabase.delete(TABLE_NAME, "$COL_ID = ?", arrayOf(id))
-            }
-
-            private fun readItem(cursor: android.database.Cursor): WallpaperItem {
-                val id = cursor.getString(cursor.getColumnIndexOrThrow(COL_ID))
-                val name = cursor.getString(cursor.getColumnIndexOrThrow(COL_NAME))
-                val path = cursor.getString(cursor.getColumnIndexOrThrow(COL_PATH))
-                val thumbnail = cursor.getString(cursor.getColumnIndexOrThrow(COL_THUMBNAIL))
-                val type = WallpaperType.valueOf(cursor.getString(cursor.getColumnIndexOrThrow(COL_TYPE)))
-                val category = cursor.getString(cursor.getColumnIndexOrThrow(COL_CATEGORY))
-                val favorite = cursor.getInt(cursor.getColumnIndexOrThrow(COL_FAVORITE)) == 1
-                val lastUsed = cursor.getLong(cursor.getColumnIndexOrThrow(COL_LAST_USED))
-                val maxFps = cursor.getInt(cursor.getColumnIndexOrThrow(COL_MAX_FPS))
-                val speed = cursor.getFloat(cursor.getColumnIndexOrThrow(COL_SPEED))
-                val muted = cursor.getInt(cursor.getColumnIndexOrThrow(COL_MUTED)) == 1
-                val scale = cursor.getInt(cursor.getColumnIndexOrThrow(COL_SCALE))
-                val touchInteractive = cursor.getInt(cursor.getColumnIndexOrThrow(COL_TOUCH_INTERACTIVE)) == 1
-                val touchIntensity = cursor.getFloat(cursor.getColumnIndexOrThrow(COL_TOUCH_INTENSITY))
-                val gyroEnabled = cursor.getInt(cursor.getColumnIndexOrThrow(COL_GYRO_ENABLED)) == 1
-                val gyroSensitivity = cursor.getFloat(cursor.getColumnIndexOrThrow(COL_GYRO_SENSITIVITY))
-                val dayNight = cursor.getInt(cursor.getColumnIndexOrThrow(COL_DAY_NIGHT)) == 1
-                val powerSave = cursor.getInt(cursor.getColumnIndexOrThrow(COL_POWER_SAVE)) == 1
-
-                val config = WallpaperConfig(
-                    maxFps = maxFps,
-                    playbackSpeed = speed,
-                    isMuted = muted,
-                    scaleMode = scale,
-                    touchInteractive = touchInteractive,
-                    touchIntensity = touchIntensity,
-                    gyroEnabled = gyroEnabled,
-                    gyroSensitivity = gyroSensitivity,
-                    dayNightEnabled = dayNight,
-                    powerSaveMode = powerSave
-                )
-                return WallpaperItem(id, name, path, thumbnail, type, category, favorite, lastUsed, config)
-            }
-        }
-        '''
-
         # ==================== 写入所有文件 ====================
         for file_path, content in files.items():
             folder = os.path.dirname(file_path)
@@ -2804,6 +2830,10 @@ jobs:
                 f.write(content.strip() + '\n')
         print("所有生产级修复源码已写入！")
         EOF
+
+    - name: 执行单元测试 (gradle testDebugUnitTest)
+      run: gradle testDebugUnitTest --no-daemon
+      continue-on-error: true
 
     - name: 执行正式编译打包 (gradle assembleDebug)
       run: gradle assembleDebug --no-daemon
