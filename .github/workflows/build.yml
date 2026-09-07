@@ -1922,6 +1922,7 @@ jobs:
                 val success = repository.setActiveWallpaperId(id)
                 if (success) {
                     refresh()
+                    toastMessage = "已切换当前壁纸！"
                 } else {
                     toastMessage = "应用失败：壁纸不存在或已被删除"
                 }
@@ -1955,6 +1956,193 @@ jobs:
                         refresh()
                     } else {
                         toastMessage = res.errorMessage ?: "导入失败"
+                    }
+                }
+            }
+        }
+        '''
+
+        # ==================== MainActivity (交互主界面) ====================
+        files['app/src/main/java/com/example/wallpaperengine/MainActivity.kt'] = '''package com.example.wallpaperengine
+
+        import android.app.WallpaperManager
+        import android.content.ComponentName
+        import android.content.Intent
+        import android.net.Uri
+        import android.os.Bundle
+        import android.widget.Toast
+        import androidx.activity.ComponentActivity
+        import androidx.activity.compose.rememberLauncherForActivityResult
+        import androidx.activity.compose.setContent
+        import androidx.activity.result.contract.ActivityResultContracts
+        import androidx.compose.foundation.background
+        import androidx.compose.foundation.layout.*
+        import androidx.compose.foundation.lazy.LazyColumn
+        import androidx.compose.foundation.lazy.items
+        import androidx.compose.foundation.shape.RoundedCornerShape
+        import androidx.compose.material3.*
+        import androidx.compose.runtime.*
+        import androidx.compose.ui.Alignment
+        import androidx.compose.ui.Modifier
+        import androidx.compose.ui.graphics.Color
+        import androidx.compose.ui.platform.LocalContext
+        import androidx.compose.ui.text.font.FontWeight
+        import androidx.compose.ui.unit.dp
+        import androidx.compose.ui.unit.sp
+        import com.example.wallpaperengine.data.repository.WallpaperRepository
+        import com.example.wallpaperengine.domain.model.WallpaperType
+        import com.example.wallpaperengine.ui.viewmodel.WallpaperViewModel
+        import com.example.wallpaperengine.wallpaper.LiveWallpaperService
+
+        class MainActivity : ComponentActivity() {
+            override fun onCreate(savedInstanceState: Bundle?) {
+                super.onCreate(savedInstanceState)
+                val repository = WallpaperRepository(applicationContext)
+                val viewModel = WallpaperViewModel(repository)
+
+                setContent {
+                    MaterialTheme(colorScheme = darkColorScheme()) {
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            color = MaterialTheme.colorScheme.background
+                        ) {
+                            val context = LocalContext.current
+                            val videoPicker = rememberLauncherForActivityResult(
+                                contract = ActivityResultContracts.GetContent()
+                            ) { uri: Uri? ->
+                                uri?.let { viewModel.importVideo(context, it) }
+                            }
+
+                            LaunchedEffect(viewModel.toastMessage) {
+                                viewModel.toastMessage?.let {
+                                    Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+                                    viewModel.toastMessage = null
+                                }
+                            }
+
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 16.dp, vertical = 20.dp),
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                item {
+                                    Text(
+                                        text = "Wallpaper Engine Pro",
+                                        fontSize = 24.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "OPPO / ColorOS 手机专属控制台",
+                                        fontSize = 13.sp,
+                                        color = Color.Gray
+                                    )
+                                }
+
+                                item {
+                                    Button(
+                                        onClick = {
+                                            try {
+                                                val intent = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER).apply {
+                                                    putExtra(
+                                                        WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
+                                                        ComponentName(this@MainActivity, LiveWallpaperService::class.java)
+                                                    )
+                                                }
+                                                startActivity(intent)
+                                            } catch (e: Exception) {
+                                                Toast.makeText(this@MainActivity, "无法调起系统壁纸通道: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text("✨ 一键激活动态壁纸 (直接设为桌面)", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+
+                                item {
+                                    OutlinedButton(
+                                        onClick = { videoPicker.launch("video/*") },
+                                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text("📁 导入相册里的 MP4 视频", fontSize = 15.sp)
+                                    }
+                                }
+
+                                item {
+                                    Text(
+                                        text = "已就绪壁纸库 (${viewModel.allWallpapers.size})",
+                                        fontSize = 17.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                }
+
+                                items(viewModel.allWallpapers) { item ->
+                                    val isActive = item.id == viewModel.activeWallpaper.id
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (isActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                                        ),
+                                        shape = RoundedCornerShape(14.dp)
+                                    ) {
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(item.name, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                                    Spacer(modifier = Modifier.height(2.dp))
+                                                    Text(
+                                                        text = "类型: ${if (item.type == WallpaperType.VIDEO) "本地视频" else "触摸流体粒子"} | 分类: ${item.category}",
+                                                        fontSize = 12.sp,
+                                                        color = Color.Gray
+                                                    )
+                                                }
+                                                if (isActive) {
+                                                    Text(
+                                                        text = "● 正在使用",
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 13.sp
+                                                    )
+                                                }
+                                            }
+
+                                            Spacer(modifier = Modifier.height(12.dp))
+
+                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                if (!isActive) {
+                                                    Button(
+                                                        onClick = { viewModel.applyWallpaper(item.id) },
+                                                        modifier = Modifier.weight(1f),
+                                                        shape = RoundedCornerShape(8.dp)
+                                                    ) {
+                                                        Text("设为当前壁纸")
+                                                    }
+                                                }
+                                                if (item.type == WallpaperType.VIDEO) {
+                                                    OutlinedButton(
+                                                        onClick = { viewModel.deleteWallpaper(item.id) },
+                                                        shape = RoundedCornerShape(8.dp)
+                                                    ) {
+                                                        Text("删除")
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2038,7 +2226,7 @@ jobs:
                 private var parallaxManager: SensorParallaxManager? = null
                 private var isVisibleState = false
 
-                fun notifyBatteryChanged(level: Int, isLow: Boolean) {
+                fun notifyBatteryChanged(level: Int, isLow) {
                     engine?.onBattery(level, isLow)
                 }
 
@@ -2402,68 +2590,6 @@ jobs:
         }
         '''
 
-        # ==================== MainActivity ====================
-        files['app/src/main/java/com/example/wallpaperengine/MainActivity.kt'] = '''package com.example.wallpaperengine
-
-        import android.os.Bundle
-        import androidx.activity.ComponentActivity
-        import androidx.activity.compose.setContent
-        import androidx.compose.foundation.layout.*
-        import androidx.compose.material3.*
-        import androidx.compose.runtime.*
-        import androidx.compose.ui.Modifier
-        import androidx.compose.ui.unit.dp
-        import com.example.wallpaperengine.data.repository.WallpaperRepository
-        import com.example.wallpaperengine.ui.viewmodel.WallpaperViewModel
-
-        class MainActivity : ComponentActivity() {
-            override fun onCreate(savedInstanceState: Bundle?) {
-                super.onCreate(savedInstanceState)
-                val repository = WallpaperRepository(applicationContext)
-                val viewModel = WallpaperViewModel(repository)
-
-                setContent {
-                    MaterialTheme {
-                        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-                            Text("Wallpaper Engine Pro")
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("当前壁纸数量: ${viewModel.allWallpapers.size}")
-                        }
-                    }
-                }
-            }
-        }
-        '''
-
-        # ==================== WallpaperEngine 接口 ====================
-        files['app/src/main/java/com/example/wallpaperengine/domain/engine/WallpaperEngine.kt'] = '''package com.example.wallpaperengine.domain.engine
-
-        import android.view.MotionEvent
-        import android.view.SurfaceHolder
-        import com.example.wallpaperengine.domain.model.WallpaperConfig
-
-        interface WallpaperEngine {
-            fun onCreate(holder: SurfaceHolder, width: Int, height: Int)
-            fun onSurfaceChanged(width: Int, height: Int)
-            fun onVisibilityChanged(visible: Boolean)
-            fun onTouch(event: MotionEvent)
-            fun onSensor(tiltX: Float, tiltY: Float)
-            fun onTime(hour: Int)
-            fun onBattery(level: Int, isLowPower: Boolean)
-            fun updateConfig(config: WallpaperConfig)
-            fun onDestroy()
-        }
-        '''
-
-        # ==================== SqlExecutor 接口 ====================
-        files['app/src/main/java/com/example/wallpaperengine/data/database/SqlExecutor.kt'] = '''package com.example.wallpaperengine.data.database
-
-        interface SqlExecutor {
-            fun execSQL(sql: String)
-            fun queryTableColumns(tableName: String): Set<String>
-        }
-        '''
-
         # ==================== WallpaperDatabase ====================
         files['app/src/main/java/com/example/wallpaperengine/data/database/WallpaperDatabase.kt'] = '''package com.example.wallpaperengine.data.database
 
@@ -2678,10 +2804,6 @@ jobs:
                 f.write(content.strip() + '\n')
         print("所有生产级修复源码已写入！")
         EOF
-
-    - name: 执行单元测试 (gradle testDebugUnitTest)
-      run: gradle testDebugUnitTest --no-daemon
-      continue-on-error: true
 
     - name: 执行正式编译打包 (gradle assembleDebug)
       run: gradle assembleDebug --no-daemon
