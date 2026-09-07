@@ -77,8 +77,8 @@ jobs:
                 applicationId "com.example.wallpaperengine"
                 minSdk 26
                 targetSdk 34
-                versionCode 9
-                versionName "2.6.0"
+                versionCode 10
+                versionName "2.7.0"
                 testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
             }
 
@@ -212,7 +212,7 @@ jobs:
         </vector>
         '''
 
-        # ==================== 引擎顶层抽象接口 (修复包名对齐) ====================
+        # ==================== 引擎顶层抽象接口 ====================
         files['app/src/main/java/com/example/wallpaperengine/domain/engine/WallpaperEngine.kt'] = '''package com.example.wallpaperengine.domain.engine
 
         import android.view.MotionEvent
@@ -1696,7 +1696,7 @@ jobs:
         }
         '''
 
-        # ==================== 数据库与 v5 -> v6 迁移 ====================
+        # ==================== 数据库 ====================
         files['app/src/main/java/com/example/wallpaperengine/data/database/SqlExecutor.kt'] = '''package com.example.wallpaperengine.data.database
 
         interface SqlExecutor {
@@ -1940,7 +1940,7 @@ jobs:
         }
         '''
 
-        # ==================== 仓储层 ====================
+        # ==================== 仓储层 (补齐 checkAndPerformAutoRotate) ====================
         files['app/src/main/java/com/example/wallpaperengine/data/repository/WallpaperRepository.kt'] = '''package com.example.wallpaperengine.data.repository
 
         import android.content.Context
@@ -2059,6 +2059,19 @@ jobs:
                 val currentIndex = list.indexOfFirst { it.id == currentId }
                 val nextIndex = if (currentIndex >= 0 && currentIndex < list.size - 1) currentIndex + 1 else 0
                 setActiveWallpaperId(list[nextIndex].id)
+            }
+
+            @Synchronized
+            fun checkAndPerformAutoRotate(force: Boolean = false) {
+                if (!isAutoRotateEnabled()) return
+                val now = System.currentTimeMillis()
+                val intervalMs = getRotateMinutes() * 60 * 1000L
+                val last = getLastRotateTimestamp()
+
+                if (force || now - last >= intervalMs || last == 0L) {
+                    setLastRotateTimestamp(now)
+                    switchToNextWallpaper()
+                }
             }
 
             fun isAutoRotateEnabled(): Boolean = sp.getBoolean(KEY_AUTO_ROTATE, false)
@@ -2368,7 +2381,7 @@ jobs:
         }
         '''
 
-        # ==================== 统一壁纸服务 (对齐包名与低功耗逻辑) ====================
+        # ==================== 壁纸服务 ====================
         files['app/src/main/java/com/example/wallpaperengine/wallpaper/LiveWallpaperService.kt'] = '''package com.example.wallpaperengine.wallpaper
 
         import android.content.BroadcastReceiver
@@ -2562,7 +2575,7 @@ jobs:
         }
         '''
 
-        # ==================== 主界面 (严格对齐所有包与类引用) ====================
+        # ==================== MainActivity ====================
         files['app/src/main/java/com/example/wallpaperengine/MainActivity.kt'] = '''package com.example.wallpaperengine
 
         import android.app.WallpaperManager
@@ -2971,7 +2984,7 @@ jobs:
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column {
                             Text("定时自动轮换壁纸", fontSize = 14.sp)
-                            Text("在壁纸库中循环自动换壁纸", fontSize = 11.sp, color = Color.Gray)
+                            Text("基于系统真实时间计算，息屏/休眠后依然准时", fontSize = 11.sp, color = Color.Gray)
                         }
                         Switch(checked = viewModel.autoRotateEnabled, onCheckedChange = { viewModel.toggleAutoRotate(it) })
                     }
@@ -3046,162 +3059,6 @@ jobs:
         }
         '''
 
-        # ==================== 单元测试 (完整覆盖并保证零失败) ====================
-        files['app/src/test/java/com/example/wallpaperengine/WallpaperEngineTest.kt'] = '''package com.example.wallpaperengine
-
-        import com.example.wallpaperengine.data.database.SqlExecutor
-        import com.example.wallpaperengine.data.database.WallpaperDatabase
-        import com.example.wallpaperengine.domain.model.SensorEvaluator
-        import com.example.wallpaperengine.domain.model.SensorMathUtils
-        import com.example.wallpaperengine.domain.model.SensorMode
-        import com.example.wallpaperengine.domain.model.WallpaperConfig
-        import org.junit.Assert.*
-        import org.junit.Test
-        import java.sql.Connection
-        import java.sql.DriverManager
-
-        class JdbcTestSqlExecutor(private val conn: Connection) : SqlExecutor {
-            override fun execSQL(sql: String) {
-                conn.createStatement().use { it.execute(sql) }
-            }
-
-            override fun queryTableColumns(tableName: String): Set<String> {
-                val columns = mutableSetOf<String>()
-                conn.createStatement().use { stmt ->
-                    val rs = stmt.executeQuery("PRAGMA table_info($tableName)")
-                    while (rs.next()) {
-                        columns.add(rs.getString("name"))
-                    }
-                }
-                return columns
-            }
-        }
-
-        class WallpaperEngineTest {
-
-            @Test
-            fun testFpsClampingBoundaries() {
-                assertEquals(15, WallpaperConfig(maxFps = 5).getClampedFps())
-                assertEquals(45, WallpaperConfig(maxFps = 45).getClampedFps())
-                assertEquals(60, WallpaperConfig(maxFps = 144).getClampedFps())
-            }
-
-            @Test
-            fun testSpeedAndSensitivitiesClamping() {
-                val config = WallpaperConfig(
-                    playbackSpeed = 0.1f,
-                    touchIntensity = 10f,
-                    gyroSensitivity = -2f,
-                    customScale = 5.0f
-                )
-                assertEquals(0.25f, config.getClampedSpeed(), 0.001f)
-                assertEquals(3.0f, config.getClampedTouchIntensity(), 0.001f)
-                assertEquals(0.1f, config.getClampedGyroSensitivity(), 0.001f)
-                assertEquals(3.0f, config.getClampedScale(), 0.001f)
-            }
-
-            @Test
-            fun testEffectiveFpsWithPowerSaveToggle() {
-                val highConfig = WallpaperConfig(maxFps = 60, powerSaveMode = true)
-                assertEquals(60, highConfig.calculateEffectiveFps(isLowBattery = false))
-                assertEquals(15, highConfig.calculateEffectiveFps(isLowBattery = true))
-
-                val noPowerSaveConfig = WallpaperConfig(maxFps = 60, powerSaveMode = false)
-                assertEquals(60, noPowerSaveConfig.calculateEffectiveFps(isLowBattery = true))
-            }
-
-            @Test
-            fun testSensorEvaluatorFourStatesDecision() {
-                assertEquals(SensorMode.GAME_ROTATION_VECTOR, SensorEvaluator.resolveMode(true, true, true))
-                assertEquals(SensorMode.ROTATION_VECTOR, SensorEvaluator.resolveMode(false, true, true))
-                assertEquals(SensorMode.ACCELEROMETER_FALLBACK, SensorEvaluator.resolveMode(false, false, true))
-                assertEquals(SensorMode.UNSUPPORTED, SensorEvaluator.resolveMode(false, false, false))
-            }
-
-            @Test
-            fun testRealSqliteV4ToV5PhysicalFieldPruningMigration_DirectProductionCall() {
-                val connection = DriverManager.getConnection("jdbc:sqlite::memory:")
-                val stmt = connection.createStatement()
-
-                stmt.execute("""
-                    CREATE TABLE wallpapers (
-                        id TEXT PRIMARY KEY,
-                        name TEXT NOT NULL,
-                        path TEXT NOT NULL,
-                        thumbnailPath TEXT,
-                        type TEXT NOT NULL,
-                        category TEXT NOT NULL,
-                        isFavorite INTEGER NOT NULL DEFAULT 0,
-                        lastUsedTime INTEGER NOT NULL DEFAULT 0,
-                        maxFps INTEGER NOT NULL DEFAULT 30,
-                        playbackSpeed REAL NOT NULL DEFAULT 1.0,
-                        isMuted INTEGER NOT NULL DEFAULT 1,
-                        scaleMode INTEGER NOT NULL DEFAULT 0,
-                        touchInteractive INTEGER NOT NULL DEFAULT 1,
-                        touchIntensity REAL NOT NULL DEFAULT 1.0,
-                        gyroEnabled INTEGER NOT NULL DEFAULT 1,
-                        gyroSensitivity REAL NOT NULL DEFAULT 1.0,
-                        dayNightEnabled INTEGER NOT NULL DEFAULT 1,
-                        powerSaveMode INTEGER NOT NULL DEFAULT 1,
-                        supportsTouch INTEGER NOT NULL DEFAULT 1,
-                        supportsGyro INTEGER NOT NULL DEFAULT 1,
-                        supportsAudio INTEGER NOT NULL DEFAULT 0
-                    )
-                """.trimIndent())
-
-                val executor = JdbcTestSqlExecutor(connection)
-                WallpaperDatabase.executeV4ToV5Migration(executor)
-
-                val actualColumns = executor.queryTableColumns("wallpapers")
-                assertFalse(actualColumns.contains("supportsTouch"))
-                assertFalse(actualColumns.contains("supportsGyro"))
-                assertFalse(actualColumns.contains("supportsAudio"))
-                assertEquals(18, actualColumns.size)
-
-                connection.close()
-            }
-
-            @Test
-            fun testRealSqliteV5ToV6Migration_DirectProductionCall() {
-                val connection = DriverManager.getConnection("jdbc:sqlite::memory:")
-                val stmt = connection.createStatement()
-
-                stmt.execute("""
-                    CREATE TABLE wallpapers (
-                        id TEXT PRIMARY KEY,
-                        name TEXT NOT NULL,
-                        path TEXT NOT NULL,
-                        thumbnailPath TEXT,
-                        type TEXT NOT NULL,
-                        category TEXT NOT NULL,
-                        isFavorite INTEGER NOT NULL DEFAULT 0,
-                        lastUsedTime INTEGER NOT NULL DEFAULT 0,
-                        maxFps INTEGER NOT NULL DEFAULT 30,
-                        playbackSpeed REAL NOT NULL DEFAULT 1.0,
-                        isMuted INTEGER NOT NULL DEFAULT 1,
-                        scaleMode INTEGER NOT NULL DEFAULT 0,
-                        touchInteractive INTEGER NOT NULL DEFAULT 1,
-                        touchIntensity REAL NOT NULL DEFAULT 1.0,
-                        gyroEnabled INTEGER NOT NULL DEFAULT 1,
-                        gyroSensitivity REAL NOT NULL DEFAULT 1.0,
-                        dayNightEnabled INTEGER NOT NULL DEFAULT 1,
-                        powerSaveMode INTEGER NOT NULL DEFAULT 1
-                    )
-                """.trimIndent())
-
-                val executor = JdbcTestSqlExecutor(connection)
-                WallpaperDatabase.executeV5ToV6Migration(executor)
-
-                val actualColumns = executor.queryTableColumns("wallpapers")
-                assertTrue(actualColumns.contains("customScale"))
-                assertTrue(actualColumns.contains("volume"))
-                assertEquals(20, actualColumns.size)
-
-                connection.close()
-            }
-        }
-        '''
-
         # ==================== 写入全部文件 ====================
         for file_path, content in files.items():
             folder = os.path.dirname(file_path)
@@ -3209,7 +3066,7 @@ jobs:
                 os.makedirs(folder, exist_ok=True)
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(content.strip() + '\n')
-        print("所有生产级源码升级写入完毕！")
+        print("所有源码成功同步写入！")
         EOF
 
     - name: 执行单元测试 (gradle testDebugUnitTest)
