@@ -1635,7 +1635,7 @@ jobs:
                         WallpaperLiveBridge.notifyActiveWallpaperChanged(fallback)
                         fallback.id
                     } else {
-                        currentActiveId
+                        currentActiveId ?: DEFAULT_FALLBACK_PRESET.id
                     }
                 }
             }
@@ -2593,7 +2593,7 @@ jobs:
                 }
             }
 
-            fn getAll(): List<WallpaperItem> {
+            fun getAll(): List<WallpaperItem> {
                 val list = mutableListOf<WallpaperItem>()
                 readableDatabase.rawQuery("SELECT * FROM $TABLE_NAME", null).use { cursor ->
                     while (cursor.moveToNext()) {
