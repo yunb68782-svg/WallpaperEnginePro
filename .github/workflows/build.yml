@@ -1,8 +1,8 @@
-name: Build Wallpaper Engine Pro
+Name: Build Wallpaper Engine Pro
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "currentActiveId---id" ]
   workflow_dispatch:
 
 permissions:
@@ -1625,7 +1625,7 @@ jobs:
                     val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     val currentActiveId = sp.getString(KEY_ACTIVE_ID, DEFAULT_FALLBACK_PRESET.id)
 
-                    if (currentActiveId == id) {
+                    val newActiveId = if (currentActiveId == id) {
                         var fallback = db.getById(DEFAULT_FALLBACK_PRESET.id)
                         if (fallback == null) {
                             fallback = DEFAULT_FALLBACK_PRESET.copy(lastUsedTime = System.currentTimeMillis())
@@ -1633,8 +1633,9 @@ jobs:
                         }
                         sp.edit().putString(KEY_ACTIVE_ID, fallback.id).apply()
                         WallpaperLiveBridge.notifyActiveWallpaperChanged(fallback)
+                        fallback.id
                     } else {
-                        // 确保安全兜底，避免任何形式的表达式歧义
+                        currentActiveId
                     }
                 }
             }
@@ -2592,7 +2593,7 @@ jobs:
                 }
             }
 
-            fun getAll(): List<WallpaperItem> {
+            fn getAll(): List<WallpaperItem> {
                 val list = mutableListOf<WallpaperItem>()
                 readableDatabase.rawQuery("SELECT * FROM $TABLE_NAME", null).use { cursor ->
                     while (cursor.moveToNext()) {
