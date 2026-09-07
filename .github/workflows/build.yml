@@ -1633,6 +1633,8 @@ jobs:
                         }
                         sp.edit().putString(KEY_ACTIVE_ID, fallback.id).apply()
                         WallpaperLiveBridge.notifyActiveWallpaperChanged(fallback)
+                    } else {
+                        // 确保安全兜底，避免任何形式的表达式歧义
                     }
                 }
             }
