@@ -1594,46 +1594,47 @@ jobs:
                 }
             }
 
-            suspend fun deleteWallpaperAsync(id: String) = withContext(Dispatchers.IO) {
-                val itemToDelete = db.getById(id)
-                db.delete(id)
+            suspend fun deleteWallpaperAsync(id: String) {
+                withContext(Dispatchers.IO) {
+                    val itemToDelete = db.getById(id)
+                    db.delete(id)
 
-                itemToDelete?.let {
-                    if (it.type == WallpaperType.VIDEO) {
-                        try {
-                            val f = File(it.path)
-                            if (f.exists() && !f.delete()) {
-                                Log.w(TAG, "Failed to delete physical video file: ${it.path}")
+                    itemToDelete?.let {
+                        if (it.type == WallpaperType.VIDEO) {
+                            try {
+                                val f = File(it.path)
+                                if (f.exists() && !f.delete()) {
+                                    Log.w(TAG, "Failed to delete physical video file: ${it.path}")
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Exception deleting video file", e)
                             }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Exception deleting video file", e)
+                        }
+                        it.thumbnailPath?.let { thumb ->
+                            try {
+                                val tf = File(thumb)
+                                if (tf.exists() && !tf.delete()) {
+                                    Log.w(TAG, "Failed to delete physical thumbnail file: $thumb")
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Exception deleting thumbnail file", e)
+                            }
                         }
                     }
-                    it.thumbnailPath?.let { thumb ->
-                        try {
-                            val tf = File(thumb)
-                            if (tf.exists() && !tf.delete()) {
-                                Log.w(TAG, "Failed to delete physical thumbnail file: $thumb")
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Exception deleting thumbnail file", e)
+
+                    val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    val currentActiveId = sp.getString(KEY_ACTIVE_ID, DEFAULT_FALLBACK_PRESET.id)
+
+                    if (currentActiveId == id) {
+                        var fallback = db.getById(DEFAULT_FALLBACK_PRESET.id)
+                        if (fallback == null) {
+                            fallback = DEFAULT_FALLBACK_PRESET.copy(lastUsedTime = System.currentTimeMillis())
+                            db.insertOrUpdate(fallback)
                         }
+                        sp.edit().putString(KEY_ACTIVE_ID, fallback.id).apply()
+                        WallpaperLiveBridge.notifyActiveWallpaperChanged(fallback)
                     }
                 }
-
-                val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                val currentActiveId = sp.getString(KEY_ACTIVE_ID, DEFAULT_FALLBACK_PRESET.id)
-
-                if (currentActiveId == id) {
-                    var fallback = db.getById(DEFAULT_FALLBACK_PRESET.id)
-                    if (fallback == null) {
-                        fallback = DEFAULT_FALLBACK_PRESET.copy(lastUsedTime = System.currentTimeMillis())
-                        db.insertOrUpdate(fallback)
-                    }
-                    sp.edit().putString(KEY_ACTIVE_ID, fallback.id).apply()
-                    WallpaperLiveBridge.notifyActiveWallpaperChanged(fallback)
-                }
-                Unit   // 修复 'if' must have both main and 'else' branches if used as an expression
             }
 
             @Synchronized
